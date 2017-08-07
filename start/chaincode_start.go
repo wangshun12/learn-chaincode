@@ -16,59 +16,147 @@ limitations under the License.
 
 package main
 
+/* Imports
+ * 4 utility libraries for formatting, handling bytes, reading and writing JSON, and string manipulation
+ * 2 specific Hyperledger Fabric specific libraries for Smart Contracts
+ */
 import (
-	"errors"
-	"fmt"
+	"bytes"  //bytes包提供了对字节切片进行读写操作的一系列函数 
+	"encoding/json"
+	"fmt" //打印等函数的包
+	"strconv"//字符转换包
 
 	"github.com/hyperledger/fabric/core/chaincode/shim"
+	sc "github.com/hyperledger/fabric/protos/peer"
 )
 
-// SimpleChaincode example simple Chaincode implementation
-type SimpleChaincode struct {
+// Define the Smart Contract structure
+type SmartContract struct {
 }
 
-// ============================================================================================================================
-// Main
-// ============================================================================================================================
-func main() {
-	err := shim.Start(new(SimpleChaincode))
-	if err != nil {
-		fmt.Printf("Error starting Simple chaincode: %s", err)
+// Define the Coupon structure, with 4 properties.  Structure tags are used by encoding/json library
+type Coupon struct {               //优惠劵结构类型
+	Number   string `json:"number"` 	//数字字符串
+	Amount string `json:"amount"`
+	Flag string `json:"flag"`
+	Owner  string `json:"owner"`
+}
+
+/*
+ * The Init method is called when the Smart Contract "fabcar" is instantiated by the blockchain network
+ * Best practice is to have any Ledger initialization in separate function -- see initLedger()
+ */
+func (s *SmartContract) Init(APIstub shim.ChaincodeStubInterface) sc.Response {
+	return shim.Success(nil)
+}
+
+/*
+ * The Invoke method is called as a result of an application request to run the Smart Contract "fabcar"
+ * The calling application program has also specified the particular smart contract function to be called, with arguments
+ */
+func (s *SmartContract) Invoke(APIstub shim.ChaincodeStubInterface) sc.Response {
+
+	// Retrieve the requested Smart Contract function and arguments
+	function, args := APIstub.GetFunctionAndParameters()
+	// Route to the appropriate handler function to interact with the ledger appropriately
+	if function == "queryCoupon" {
+		return s.queryCoupon(APIstub, args)
+	} else if function == "initLedger" {
+		return s.initLedger(APIstub)
+	} else if function == "createCoupon" {
+		return s.createCoupon(APIstub, args)
+	} else if function == "consumeCoupon" { //消耗代金券
+		return s.queryAllCoupon(APIstub)
+	} else if function == "changeCouponOwner" {
+		return s.changeCouponOwner(APIstub, args)
 	}
+
+	return shim.Error("Invalid Smart Contract function name.")
 }
 
-// Init resets all the things
-func (t *SimpleChaincode) Init(stub shim.ChaincodeStubInterface, function string, args []string) ([]byte, error) {
+func (s *SmartContract) queryCoupon(APIstub shim.ChaincodeStubInterface, args []string) sc.Response {
+
 	if len(args) != 1 {
-		return nil, errors.New("Incorrect number of arguments. Expecting 1")
+		return shim.Error("Incorrect number of arguments. Expecting 1")
 	}
 
-	return nil, nil
+	couponAsBytes, _ := APIstub.GetState(args[0])
+	return shim.Success(couponAsBytes)
 }
 
-// Invoke is our entry point to invoke a chaincode function
-func (t *SimpleChaincode) Invoke(stub shim.ChaincodeStubInterface, function string, args []string) ([]byte, error) {
-	fmt.Println("invoke is running " + function)
-
-	// Handle different functions
-	if function == "init" {													//initialize the chaincode state, used as reset
-		return t.Init(stub, "init", args)
+func (s *SmartContract) initLedger(APIstub shim.ChaincodeStubInterface) sc.Response {
+	coupons := []Coupon{
+		Coupon{Number: "001", Amount: "100", Flag: "0", Owner: "hanshuang"},
 	}
-	fmt.Println("invoke did not find func: " + function)					//error
 
-	return nil, errors.New("Received unknown function invocation: " + function)
+	i := 0
+	for i < len(coupons) {
+		fmt.Println("i is ", i)
+		couponAsBytes, _ := json.Marshal(coupons[i])
+		APIstub.PutState("COUPON"+strconv.Itoa(i), couponAsBytes)
+		fmt.Println("Added", coupons[i])
+		i = i + 1
+	}
+
+	return shim.Success(nil)
 }
 
-// Query is our entry point for queries
-func (t *SimpleChaincode) Query(stub shim.ChaincodeStubInterface, function string, args []string) ([]byte, error) {
-	fmt.Println("query is running " + function)
+func (s *SmartContract) createCoupon(APIstub shim.ChaincodeStubInterface, args []string) sc.Response {
 
-	// Handle different functions
-	if function == "dummy_query" {											//read a variable
-		fmt.Println("hi there " + function)						//error
-		return nil, nil;
+	if len(args) != 5 {
+		return shim.Error("Incorrect number of arguments. Expecting 5")
 	}
-	fmt.Println("query did not find func: " + function)						//error
 
-	return nil, errors.New("Received unknown function query: " + function)
+	var coupon = Coupon{Number: args[1], Amount: args[2], Flag: args[3], Owner: args[4]}
+
+	couponAsBytes, _ := json.Marshal(coupon)
+	APIstub.PutState(args[0], couponAsBytes)
+
+	return shim.Success(nil)
+}
+
+func (s *SmartContract) consumeCoupon(APIstub shim.ChaincodeStubInterface, args []string) sc.Response {
+
+	if len(args) != 2 {
+		return shim.Error("Incorrect number of arguments. Expecting 2")
+	}
+
+	couponAsBytes, _ := APIstub.GetState(args[0])
+	coupon := Coupon{}
+
+	json.Unmarshal(couponAsBytes, &coupon)
+	coupon.Flag = args[1]
+
+	carAsBytes, _ = json.Marshal(coupon)
+	APIstub.PutState(args[0], couponAsBytes)
+
+	return shim.Success(nil)
+}
+
+func (s *SmartContract) changeCouponOwner(APIstub shim.ChaincodeStubInterface, args []string) sc.Response {
+
+	if len(args) != 2 {
+		return shim.Error("Incorrect number of arguments. Expecting 2")
+	}
+
+	couponAsBytes, _ := APIstub.GetState(args[0])
+	coupon := Coupon{}
+
+	json.Unmarshal(couponAsBytes, &coupon)
+	coupon.Owner = args[1]
+
+	carAsBytes, _ = json.Marshal(coupon)
+	APIstub.PutState(args[0], couponAsBytes)
+
+	return shim.Success(nil)
+}
+
+// The main function is only relevant in unit test mode. Only included here for completeness.
+func main() {
+
+	// Create a new Smart Contract
+	err := shim.Start(new(SmartContract))
+	if err != nil {
+		fmt.Printf("Error creating new Smart Contract: %s", err)
+	}
 }
